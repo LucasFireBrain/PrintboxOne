@@ -8,7 +8,7 @@ import json
 from datetime import datetime
 import importlib.util
 import smtplib
-from typing import Optional
+from email.message import EmailMessage
 from PyPDF2 import PdfReader, PdfWriter
 
 # ----------------------------
@@ -134,6 +134,71 @@ def decode_str(s):
     return decoded
 
 
+def send_email(to_address: str, subject: str, body: str):
+    """Send an email via the configured SMTP account."""
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = EMAIL_USER
+    msg["To"] = to_address
+    msg.set_content(body)
+
+    try:
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(EMAIL_USER, EMAIL_APP_PASSWORD)
+            server.send_message(msg)
+        log_event({
+            "status": "notification_sent",
+            "recipient": to_address,
+            "subject": subject
+        })
+    except Exception as e:
+        print(f"[ERROR] Failed to send email notification: {e}")
+        log_event({
+            "status": "notification_error",
+            "recipient": to_address,
+            "subject": subject,
+            "error": str(e)
+        })
+
+
+def is_printer_available():
+    """Return True if the configured printer can be reached."""
+    try:
+        result = subprocess.run(
+            ["lpstat", "-p", PRINTER_NAME],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        details = result.stdout.strip()
+        print(details)
+        log_event({
+            "status": "printer_available",
+            "printer": PRINTER_NAME,
+            "details": details
+        })
+        return True
+    except FileNotFoundError:
+        message = "lpstat command not found"
+        print(f"[ERROR] {message}.")
+        log_event({
+            "status": "printer_check_failed",
+            "printer": PRINTER_NAME,
+            "error": message
+        })
+    except subprocess.CalledProcessError as e:
+        stderr = (e.stderr or "").strip()
+        message = stderr or f"Printer {PRINTER_NAME} not available"
+        print(f"[WARN] {message}")
+        log_event({
+            "status": "printer_unavailable",
+            "printer": PRINTER_NAME,
+            "error": message
+        })
+    return False
+
+
 def reverse_pdf(input_path, output_path):
     """Reverse page order of PDF so page 1 ends up on top of stack."""
     try:
@@ -185,6 +250,28 @@ def process_mail_once():
             print(f"[INFO] From {sender} | Subject: {subject}")
 
             pdf_found = False
+
+            printer_ready = is_printer_available()
+            if not printer_ready:
+                notification_body = (
+                    "Hola,\n\n"
+                    "Recibimos tu solicitud de impresión, pero actualmente no hay una impresora "
+                    "disponible en Printbox. Intentá nuevamente más tarde y te avisaremos cuando "
+                    "el servicio esté listo.\n\n"
+                    "— Equipo Printbox"
+                )
+                send_email(
+                    sender,
+                    "Printbox: impresora no disponible",
+                    notification_body
+                )
+                log_event({
+                    "status": "printer_missing_notification",
+                    "sender": sender,
+                    "subject": subject
+                })
+                mail.store(msg_id, "+FLAGS", "\\Seen")
+                continue
             for part in msg.walk():
                 if part.get_content_type() == "application/pdf":
                     filename = decode_str(part.get_filename())

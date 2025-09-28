@@ -10,6 +10,8 @@ import importlib.util
 import smtplib
 from email.message import EmailMessage
 from PyPDF2 import PdfReader, PdfWriter
+from typing import Optional
+
 
 # ----------------------------
 # Load config

@@ -1,6 +1,9 @@
 from printbox_core import process_mail_once, LOG_FILE
 import json
 import subprocess
+import re
+
+CONFIG_PATH = "/home/lucas/printbox/config.py"
 
 def show_printer_status():
     result = subprocess.run(["lpstat", "-p", "-d"], capture_output=True, text=True)
@@ -24,6 +27,42 @@ def show_logs():
     except FileNotFoundError:
         print("No logs yet.")
 
+def list_printers():
+    """List printers detected by CUPS"""
+    result = subprocess.run(["lpstat", "-p"], capture_output=True, text=True)
+    lines = result.stdout.strip().splitlines()
+    printers = []
+    for line in lines:
+        m = re.match(r"^printer\s+(\S+)", line)
+        if m:
+            printers.append(m.group(1))
+    return printers
+
+def choose_printer():
+    """Prompt user to select a printer and save to config.py"""
+    printers = list_printers()
+    if not printers:
+        print("[WARN] No printers found. Is your USB printer plugged in and CUPS installed?")
+        return
+    print("\nAvailable printers:")
+    for idx, p in enumerate(printers, 1):
+        print(f"[{idx}] {p}")
+    choice = input("Select printer number: ").strip()
+    try:
+        chosen = printers[int(choice)-1]
+    except (IndexError, ValueError):
+        print("[ERROR] Invalid choice")
+        return
+
+    # Update config.py
+    with open(CONFIG_PATH, "r") as f:
+        cfg = f.read()
+    new_cfg = re.sub(r'PRINTER_NAME\s*=\s*".*"', f'PRINTER_NAME = "{chosen}"', cfg)
+    with open(CONFIG_PATH, "w") as f:
+        f.write(new_cfg)
+
+    print(f"[INFO] Default printer updated to: {chosen}")
+
 def menu():
     while True:
         print("""
@@ -34,7 +73,8 @@ def menu():
 [2] Job queue
 [3] View last logs
 [4] Check inbox once
-[5] Exit
+[5] Choose printer
+[6] Exit
 """)
         choice = input("Select option: ").strip()
 
@@ -47,6 +87,8 @@ def menu():
         elif choice == "4":
             process_mail_once()
         elif choice == "5":
+            choose_printer()
+        elif choice == "6":
             break
         input("\n[ENTER] to continue…")
 

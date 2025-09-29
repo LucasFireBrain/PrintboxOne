@@ -1,9 +1,6 @@
-from printbox_core import process_mail_once, LOG_FILE
+from printbox_core import process_mail_once, LOG_FILE, QUOTAS_FILE
 import json
 import subprocess
-import re
-
-CONFIG_PATH = "/home/lucas/printbox/config.py"
 
 def show_printer_status():
     result = subprocess.run(["lpstat", "-p", "-d"], capture_output=True, text=True)
@@ -22,46 +19,67 @@ def show_logs():
     try:
         with open(LOG_FILE, "r") as f:
             logs = json.load(f)
-            for entry in logs[-10:]:  # last 10
+            for entry in logs[-10:]:
                 print(entry)
     except FileNotFoundError:
         print("No logs yet.")
 
-def list_printers():
-    """List printers detected by CUPS"""
-    result = subprocess.run(["lpstat", "-p"], capture_output=True, text=True)
-    lines = result.stdout.strip().splitlines()
-    printers = []
-    for line in lines:
-        m = re.match(r"^printer\s+(\S+)", line)
-        if m:
-            printers.append(m.group(1))
-    return printers
-
 def choose_printer():
-    """Prompt user to select a printer and save to config.py"""
-    printers = list_printers()
+    result = subprocess.run(["lpstat", "-p"], capture_output=True, text=True)
+    printers = []
+    for line in result.stdout.strip().splitlines():
+        if line.startswith("printer "):
+            name = line.split()[1]
+            printers.append(name)
+
     if not printers:
         print("[WARN] No printers found. Is your USB printer plugged in and CUPS installed?")
         return
+
     print("\nAvailable printers:")
-    for idx, p in enumerate(printers, 1):
-        print(f"[{idx}] {p}")
+    for i, p in enumerate(printers, 1):
+        print(f"[{i}] {p}")
     choice = input("Select printer number: ").strip()
+
     try:
-        chosen = printers[int(choice)-1]
-    except (IndexError, ValueError):
-        print("[ERROR] Invalid choice")
-        return
+        idx = int(choice) - 1
+        if 0 <= idx < len(printers):
+            selected = printers[idx]
+            subprocess.run(["sudo", "lpoptions", "-d", selected])
+            print(f"[INFO] Default printer updated to: {selected}")
+        else:
+            print("[WARN] Invalid choice.")
+    except ValueError:
+        print("[WARN] Invalid input.")
 
-    # Update config.py
-    with open(CONFIG_PATH, "r") as f:
-        cfg = f.read()
-    new_cfg = re.sub(r'PRINTER_NAME\s*=\s*".*"', f'PRINTER_NAME = "{chosen}"', cfg)
-    with open(CONFIG_PATH, "w") as f:
-        f.write(new_cfg)
+def edit_quotas():
+    try:
+        with open(QUOTAS_FILE, "r") as f:
+            quotas = json.load(f)
+    except FileNotFoundError:
+        quotas = {}
 
-    print(f"[INFO] Default printer updated to: {chosen}")
+    print("\nCurrent quotas:")
+    for user, remaining in quotas.items():
+        print(f"- {user}: {remaining} pages")
+
+    action = input("Do you want to (a)dd/update a user or (r)eset all? ").strip().lower()
+    if action == "a":
+        email = input("Enter user email: ").strip()
+        amount = input("Enter new quota amount (integer): ").strip()
+        try:
+            quotas[email] = int(amount)
+            print(f"[INFO] Set {email} quota to {amount}")
+        except ValueError:
+            print("[WARN] Invalid number.")
+    elif action == "r":
+        confirm = input("Are you sure you want to reset all quotas? (yes/no): ").strip().lower()
+        if confirm == "yes":
+            quotas = {}
+            print("[INFO] All quotas reset.")
+
+    with open(QUOTAS_FILE, "w") as f:
+        json.dump(quotas, f, indent=2)
 
 def menu():
     while True:
@@ -73,8 +91,9 @@ def menu():
 [2] Job queue
 [3] View last logs
 [4] Check inbox once
-[5] Choose printer
-[6] Exit
+[5] Choose printer (set default)
+[6] Edit quotas
+[7] Exit
 """)
         choice = input("Select option: ").strip()
 
@@ -89,6 +108,8 @@ def menu():
         elif choice == "5":
             choose_printer()
         elif choice == "6":
+            edit_quotas()
+        elif choice == "7":
             break
         input("\n[ENTER] to continue…")
 

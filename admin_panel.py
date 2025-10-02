@@ -1,4 +1,4 @@
-from printbox_core import process_mail_once, LOG_FILE, QUOTAS_FILE
+from printbox_core import process_mail_once, LOG_FILE
 import json
 import subprocess
 
@@ -19,67 +19,42 @@ def show_logs():
     try:
         with open(LOG_FILE, "r") as f:
             logs = json.load(f)
-            for entry in logs[-10:]:
+            for entry in logs[-10:]:  # last 10
                 print(entry)
     except FileNotFoundError:
         print("No logs yet.")
 
 def choose_printer():
-    result = subprocess.run(["lpstat", "-p"], capture_output=True, text=True)
-    printers = []
-    for line in result.stdout.strip().splitlines():
-        if line.startswith("printer "):
-            name = line.split()[1]
-            printers.append(name)
-
-    if not printers:
-        print("[WARN] No printers found. Is your USB printer plugged in and CUPS installed?")
-        return
-
-    print("\nAvailable printers:")
-    for i, p in enumerate(printers, 1):
-        print(f"[{i}] {p}")
-    choice = input("Select printer number: ").strip()
-
     try:
-        idx = int(choice) - 1
-        if 0 <= idx < len(printers):
-            selected = printers[idx]
-            subprocess.run(["sudo", "lpoptions", "-d", selected])
-            print(f"[INFO] Default printer updated to: {selected}")
-        else:
-            print("[WARN] Invalid choice.")
-    except ValueError:
-        print("[WARN] Invalid input.")
+        result = subprocess.run(["lpstat", "-p"], capture_output=True, text=True, check=True)
+        lines = result.stdout.strip().splitlines()
+        printers = []
+        for line in lines:
+            if line.startswith("printer "):
+                printers.append(line.split()[1])
 
-def edit_quotas():
-    try:
-        with open(QUOTAS_FILE, "r") as f:
-            quotas = json.load(f)
-    except FileNotFoundError:
-        quotas = {}
+        if not printers:
+            print("[WARN] No printers found. Is your USB printer plugged in and CUPS running?")
+            return
 
-    print("\nCurrent quotas:")
-    for user, remaining in quotas.items():
-        print(f"- {user}: {remaining} pages")
+        print("\nAvailable printers:")
+        for i, p in enumerate(printers, start=1):
+            print(f"[{i}] {p}")
 
-    action = input("Do you want to (a)dd/update a user or (r)eset all? ").strip().lower()
-    if action == "a":
-        email = input("Enter user email: ").strip()
-        amount = input("Enter new quota amount (integer): ").strip()
-        try:
-            quotas[email] = int(amount)
-            print(f"[INFO] Set {email} quota to {amount}")
-        except ValueError:
-            print("[WARN] Invalid number.")
-    elif action == "r":
-        confirm = input("Are you sure you want to reset all quotas? (yes/no): ").strip().lower()
-        if confirm == "yes":
-            quotas = {}
-            print("[INFO] All quotas reset.")
+        choice = input("Select printer number: ").strip()
+        if not choice.isdigit() or int(choice) < 1 or int(choice) > len(printers):
+            print("[ERROR] Invalid choice.")
+            return
 
-    with open(QUOTAS_FILE, "w") as f:
-        json.dump(quotas, f, indent=2)
+        selected = printers[int(choice) - 1]
+
+        # Set as system default
+        subprocess.run(["sudo", "lpoptions", "-d", selected], check=False)
+
+        print(f"[INFO] Default printer updated to: {selected}")
+
+    except subprocess.CalledProcessError as e:
+        print("[ERROR] Could not list printers:", e)
 
 def menu():
     while True:
@@ -92,8 +67,7 @@ def menu():
 [3] View last logs
 [4] Check inbox once
 [5] Choose printer (set default)
-[6] Edit quotas
-[7] Exit
+[6] Exit
 """)
         choice = input("Select option: ").strip()
 
@@ -108,8 +82,6 @@ def menu():
         elif choice == "5":
             choose_printer()
         elif choice == "6":
-            edit_quotas()
-        elif choice == "7":
             break
         input("\n[ENTER] to continue…")
 
